@@ -1,0 +1,39 @@
+# Threat-Hunt-Projects
+Hypothesis: To Audit RDP Logons from External IP's
+This hypothesis will hunt for specific RDP Logons and find out when same account is RDPed twice or more from External IP’s and from locations very far away in a short span (Geo-graphically impossible to travel, ie via VPN).
+MITRE ATT&CK Tactics and Techniques
+  
+MITRE ID
+T1078
+
+Platform Scope
+
+All Windows User Accounts
+Required Attack Privileges: User
+
+The Hunt Mission
+This hunt will query for the following,
+1.	RDP connection came from a non RFC1819 address (IP address that is assigned by an enterprise organization to an internal host)
+2.	Find users that have RDP'ed into our environment from more than one external IP address
+3.	Compare the GeoIP location of the first login we see against the GeoIP location of the last login we see
+4.	Calculate the distance between those two fixed points
+5.	Calculate the time delta between those two logins
+6.	Estimate how fast you would have to be physically traveling to get from location 1 to location 2
+
+•	In CrowdStrike, perform an Event Search; 
+
+index=main event_platform=win event_simpleName=UserLogon (RemoteIP!=172.16.0.0/12 AND RemoteIP!=192.168.0.0/16 AND RemoteIP!=10.0.0.0/8 AND RemoteIP!=127.0.0.1 AND RemoteIP!= 100.64.0.0/10 AND RemoteIP!= 170.37.0.0/16 AND RemoteIP!= 170.131.0.0/16) LogonType_decimal=10 
+| iplocation RemoteIP 
+| stats earliest(LogonTime_decimal) as firstLogon earliest(lat) as lat1 earliest(lon) as lon1 earliest(Country) as country1 earliest(Region) as region1 earliest(City) as city1 latest(LogonTime_decimal) as lastLogon latest(lat) as lat2 latest(lon) as lon2 latest(Country) as country2 latest(Region) as region2 latest(City) as city2 earliest(RemoteIP) as RemoteIP1 latest(RemoteIP) as RemoteIP2 dc(RemoteIP) as remoteIPCount by UserSid_readable, UserName, ComputerName
+| where remoteIPCount > 1
+| eval timeDelta=round((lastLogon-firstLogon)/60/60,2)
+| eval rlat1 = pi()*lat1/180, rlat2=pi()*lat2/180, rlat = pi()*(lat2-lat1)/180, rlon= pi()*(lon2-lon1)/180
+| eval a = sin(rlat/2) * sin(rlat/2) + cos(rlat1) * cos(rlat2) * sin(rlon/2) * sin(rlon/2) 
+| eval c = 2 * atan2(sqrt(a), sqrt(1-a)) 
+| eval distance = round((6371 * c),0)
+| eval speed=round((distance/timeDelta),2)
+| table UserSid_readable, UserName, ComputerName, RemoteIP1, firstLogon, country1, region1, city1, RemoteIP2, lastLogon, country2, region2, city2, timeDelta, distance, speed remoteIPCount
+| convert ctime(firstLogon), ctime(lastLogon)
+| sort - speed
+| rename UserSid_readable AS "User SID", UserName AS User, ComputerName AS "ComputerName", RemoteIP1 AS "First Remote IP", RemoteIP2 AS "Last Remote IP", firstLogon AS "First Logon Time", country1 AS " First Country" region1 AS "First Region", city1 AS "First City", lastLogon AS "Last Logon Time", country2 AS "Last Country", region2 AS "Last Region", city2 AS "Last City", timeDelta AS "Elapsed Time (hours)", distance AS "Kilometers Between GeoIP Locations", speed AS "Required Speed (km/h)", remoteIPCount as "Number of Remote Logins" 
+
