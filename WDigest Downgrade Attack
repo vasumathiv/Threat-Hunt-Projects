@@ -1,0 +1,45 @@
+# Threat-Hunt-Projects
+Hypothesis: WDigest Downgrade Attack
+Adversaries may attempt to access credential material stored in the process memory of the Local Security Authority Subsystem Service (LSASS). After a user logs on, the system generates and stores a variety of credential materials in LSASS process memory. These credential materials can be harvested by an administrative user or SYSTEM and used to conduct Lateral Movement using Use Alternate Authentication Material.
+MITRE ATT&CK Tactics and Techniques
+  
+MITRE ID
+T1003.001
+
+Platform Scope
+
+Windows
+Required Attack Privileges: User, Admin
+
+The Hunt Mission:
+Windows Security Support Provider (SSP) DLLs are loaded into LSSAS process at system start. Once loaded into the LSA, SSP DLLs have access to encrypted and plaintext passwords that are stored in Windows, such as any logged-on user's Domain password or smart card PINs. The SSP configuration is stored in two Registry 
+keys: 
+
+HKLM\SYSTEM\CurrentControlSet\Control\Lsa\Security Packages and 
+HKLM\SYSTEM\CurrentControlSet\Control\Lsa\OSConfig\Security Packages. 
+
+An adversary may modify these Registry keys to add new SSPs, which will be loaded the next time the system boots, or when the AddSecurityPackage Windows API function is called.
+
+One of the SSPs can be used to access credentials:
+•	Wdigest: The Digest Authentication protocol is designed for use with Hypertext Transfer Protocol (HTTP) and Simple Authentication Security Layer (SASL) exchanges. 
+When WDigest authentication is enabled, Lsass.exe retains a copy of the user's plaintext password in memory, where it can be at risk of theft. If this setting is not configured, WDigest authentication is disabled in Windows 10; it is enabled by default in earlier versions of Windows and Windows Server.
+In Windows , Microsoft added a support for a protocol known as WDigest. The WDigest protocol is used for clients to send cleartext credentials to Hypertext Transfer Protocol (HTTP) and Simple Authentication Security Layer (SASL) applications. Windows stores the password in memory for convenience of the user when they login to their local workstation.
+If it is enabled, then it is possible to dump cached credentials from memory by using tools such as Mimikatz. This is also called WDigest downgrade attack.
+The wdigest module is OPSEC safe. This means that it doesn't touch the disk and therefore shouldn't trigger any alarms.
+
+This hypothesis will hunt for,
+Any registry modification with pertain to WDigest User Logon Credential
+
+•	In CrowdStrike, perform an Event Search; 
+
+index=main sourcetype=*asep* event_platform=Win RegObjectName="*\\Control\\SecurityProviders\\WDigest*" RegValueName="UseLogonCredential" RegStringValue=1
+RegOperationType=1
+| rename AsepClass_decimal as AsepClass AsepValueType_decimal as AsepValueType RegOperationType_decimal as RegOperationType 
+| lookup regoperation RegOperationType OUTPUT RegOperationName 
+| lookup asepvalue AsepValueType OUTPUT AsepValueName 
+| lookup asepclass AsepClass OUTPUT AsepClassName 
+| eval EventTime(UTC) = _time
+| table EventTime(UTC) event_simpleName ComputerName AsepValueName AsepClass RegOperationName RegOperationType RegObjectName RegValueName RegStringValue
+| fieldformat "EventTime(UTC)"=strftime('EventTime(UTC)', "%Y-%m-%d %H:%M:%S")
+| sort 0 -"EventTime(UTC)"
+
