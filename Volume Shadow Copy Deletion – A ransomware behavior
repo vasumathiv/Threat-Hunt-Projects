@@ -1,0 +1,72 @@
+# Threat-Hunt-Projects
+Hypothesis: Volume Shadow Copy Deletion – A ransomware behavior
+Adversaries may insert, delete, or manipulate data to influence external outcomes or hide activity, thus threatening the integrity of the data. By manipulating data, adversaries may attempt to affect a business process, organizational understanding, or decision making.
+Ransomware is a type of malware that attackers use to hold data hostage unless a ransom is paid. If not prevented, or caught shortly after infection, ransomware attacks can cripple organizations by stealing it to sell on the Dark Web, making sensitive information public, or destroying data entirely. Customer information, financial data, intellectual property, and employee details are frequently targeted during attacks, and may still be stolen, even when attackers are paid off.
+Common Traits of Ransomware:
+1.	Unusual RDP Logons from External IP’s – Prevent by appropriate firewall rules by restricting external RDP Logons 
+2.	Malicious URL’s or exe’s in a phishing mail – Educate the users about phishing, block known malicious URL’s and exe’s
+3.	Privilege escalation – Enable Multi Factor Authentication
+4.	File Encryption
+5.	Renames the file to break the filetype relationship to the file's parent application, and prevents the user from recovering their files from earlier versions in the Windows Volume Shadow Copy Service
+6.	Deletes Volume shadow copy, so that the previous version copied of files cannot be recovered through Microsoft Volume shadow service [VSS].
+MITRE ATT&CK Tactics and Techniques
+  
+MITRE ID
+T1565
+
+Platform Scope
+
+Windows
+
+Required Attack Privileges: User, Administrator	
+The Hunt Mission:
+In this hypothesis, we will focus on “Volume Shadow Copy Deletion” trait.
+
+What is Volume Shadow Copy:
+Volume Shadow Copy Service (VSS) is a set of Component Object Model (COM) interfaces in Microsoft Windows that provide the framework for doing volume backups and for creating consistent, point-in-time copies of data (known as shadow copies). Business applications, backup applications, fast-recovery solutions, file system services and storage hardware are put into coordination so that VSS can produce consistent shadow copies.
+Why ransomware deletes Volume Shadow Copy:
+By deleting the Volume Shadow Copy, the attacker makes the files non-recoverable from this default backup service provided by Microsoft.
+
+
+Thereby, it is important for us to have the “Volume Shadow Copy Deletion” get alerted.
+In general, deleting shadow copies is not a usual activity. We only tend to delete shadow copies in case of mitigation process by endpoint management services. And thereby we can determine if the deletion has been done for legitimate purpose or not.
+
+Preparing for the Hunt 
+
+Identify the Scope 
+•	Enterprise-wide 
+
+Identify the Tools 
+•	Ensure access to CrowdStrike Falcon, including the ability to view and search event data. 
+
+Collecting the Data 
+Log Entries in CrowdStrike
+•	In CrowdStrike, perform an Event Search; use the time preset 7 Days
+1.Detects deletion by VSSADMIN
+
+Attackers routinely delete the volume shadow copies during the attack, via a Windows utility called VSSADMIN.EXE. This utility provides a command-line interface with the volume shadow copy service and requires elevated administrator privileges. Attackers typically steal or already possess privileged credentials or use an exploit to elevate privileges. 
+
+event_platform=win ((event_simpleName=ProcessRollup2 OR event_simpleName=SyntheticProcessRollup2 OR event_simpleName=
+ServiceStarted) AND FileName=vssvc.exe) OR event_simpleName=OsVersionInfo
+| lookup local=true aid_master aid OUTPUT AgentVersion, MachineDomain, OU, SiteName, Version, ProductType
+| eval FileName=lower(FileName)
+| join aid
+    [search (event_simpleName=FileOpenInfo AND (FilePath=*ShadowCopy*)) OR (event_simpleName=SuspiciousRawDiskRead)
+    | rename ContextProcessId_decimal as OffendingProcess]
+| stats dc(event_simpleName) as eventCount latest(BuildNumber_decimal) as buildNumber latest(SubBuildNumber_decimal) as subBuildNumber latest(ProductName) as productName values(FileName) as vssProcessRunning values(OffendingProcess) as Processes by aid, ComputerName, AgentVersion, MachineDomain, OU, SiteName, ProductType
+| where buildNumber>=17763
+| search ProductType=1
+| where isnotnull(vssProcessRunning)
+
+
+    2. Detects deletion by wmic
+
+An alternative method to delete the volume shadow copies is via Windows Management Instrumentation (WMI). Windows includes a command-line utility called WMIC.EXE to access WMI, which is used by many applications as a scripting interface.
+
+event_platform=win event_simpleName=ProcessRollup2 (FileName=wmic.exe)
+| eval isShadowcopy=if(like(cmdNoEscape, "%shadowcopy%"), "5", "0")
+| eval isDelete=if(like(cmdNoEscape, "%delete%"), "10", "0")
+| where isShadowcopy=5 AND isDelete=10
+| eval EventTime(UTC) = _time
+| table EventTime(UTC) event_simpleName ComputerName UserName FileName CommandLine
+
